@@ -1,0 +1,26 @@
+# kind cluster definition: 1 control-plane + 1 worker.
+# Kept tiny so the whole stack fits an 8 GB laptop.
+# verify against kind docs for your installed kind version:
+#   https://kind.sigs.k8s.io/docs/user/configuration/
+apiVersion: kind.x-k8s.io/v1alpha4
+kind: Cluster
+name: cnpg-on-kind
+nodes:
+  # Control-plane also exposes host ports so we can reach ingress / Grafana
+  # from the laptop without a LoadBalancer.
+  - role: control-plane
+    extraPortMappings:
+      # HTTP ingress -> host :80
+      - containerPort: 80
+        hostPort: 80
+        protocol: TCP
+      # HTTPS ingress -> host :443
+      - containerPort: 443
+        hostPort: 443
+        protocol: TCP
+      # Grafana NodePort -> host :3000 (if you expose Grafana via NodePort)
+      - containerPort: 30000
+        hostPort: 3000
+        protocol: TCP
+  # One worker node carries the Postgres + MinIO + monitoring workloads.
+  - role: worker

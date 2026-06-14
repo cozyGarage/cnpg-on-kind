@@ -1,0 +1,36 @@
+# CloudNativePG Pooler — PgBouncer in front of the cluster's read-write endpoint.
+# Optional, but this is how you protect Postgres from connection storms in a
+# payments app (lots of short-lived connections).
+# verify against cloudnative-pg.io docs for your installed operator version:
+#   https://cloudnative-pg.io/documentation/current/connection_pooling/
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: cnpg-demo-pooler-rw
+  namespace: cnpg-demo
+spec:
+  # Point the pooler at the cluster created in cluster.yaml.
+  cluster:
+    name: cnpg-demo
+  # rw = pool the read-write (primary) endpoint. Use "ro" for read replicas.
+  type: rw
+  # One pooler pod is plenty for the demo.
+  instances: 1
+  pgbouncer:
+    # transaction pooling: a server connection is assigned per transaction —
+    # the right default for web/payments workloads.
+    poolMode: transaction
+    parameters:
+      max_client_conn: "200"
+      default_pool_size: "20"
+  # Keep the pooler tiny.
+  template:
+    spec:
+      containers:
+        - name: pgbouncer
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              memory: "128Mi"

@@ -1,0 +1,7 @@
+# Dedicated namespace for the demo database and its backup target.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cnpg-demo
+  labels:
+    app.kubernetes.io/part-of: cnpg-on-kind

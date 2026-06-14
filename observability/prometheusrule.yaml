@@ -1,0 +1,52 @@
+# PrometheusRule — CNPG alerts using REAL CNPG metric names.
+# The Prometheus Operator (from kube-prometheus-stack) picks this up via the
+# `release` label below. Adjust the label to match your Helm release name.
+# verify metric names against cloudnative-pg.io docs / your operator's exporter:
+#   https://cloudnative-pg.io/documentation/current/monitoring/
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cnpg-demo-alerts
+  namespace: monitoring
+  labels:
+    # Must match the kube-prometheus-stack release so the operator selects it.
+    release: kube-prometheus-stack
+    app.kubernetes.io/part-of: cnpg-on-kind
+spec:
+  groups:
+    - name: cnpg.rules
+      rules:
+        # ---- Replication lag ------------------------------------------------
+        # cnpg_pg_replication_lag is reported in SECONDS by the CNPG exporter.
+        # Alert if a replica is more than 20s behind for a sustained period.
+        - alert: CNPGReplicationLagHigh
+          expr: cnpg_pg_replication_lag > 20
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "CNPG replication lag is high (> 20s)"
+            description: >-
+              Replica {{ $labels.pod }} in cluster {{ $labels.cluster }} is
+              lagging the primary by {{ $value }}s. Risk of data loss on
+              failover. Check replica I/O, WAL volume, and network.
+
+        # ---- Connection saturation -----------------------------------------
+        # cnpg_backends_total counts active backends. Compare against the
+        # configured max_connections (cnpg_settings_setting{name="max_connections"})
+        # and alert when we cross 80% — connection exhaustion takes the DB down.
+        - alert: CNPGConnectionSaturation
+          expr: >-
+            sum by (cluster, namespace) (cnpg_backends_total)
+              /
+            max by (cluster, namespace) (cnpg_settings_setting{name="max_connections"})
+              > 0.8
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "CNPG connection pool nearing saturation (> 80%)"
+            description: >-
+              Cluster {{ $labels.cluster }} is using over 80% of max_connections.
+              Add/enable the PgBouncer pooler or raise the limit before clients
+              start getting 'too many connections'.

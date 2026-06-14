@@ -1,0 +1,55 @@
+# CNPG recovery — bootstrap a NEW Cluster from the object-store backup (PITR).
+#
+# This is the SAFE way to test restores: we never mutate the live cluster.
+# It creates a brand-new cluster (cnpg-demo-restore) that recovers from MinIO.
+# verify against cloudnative-pg.io docs for your installed operator version:
+#   https://cloudnative-pg.io/documentation/current/recovery/
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: cnpg-demo-restore
+  namespace: cnpg-demo
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.2
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      memory: "512Mi"
+  storage:
+    size: 1Gi
+    storageClass: standard
+
+  # ---- Bootstrap from a backup (recovery) --------------------------------
+  bootstrap:
+    recovery:
+      # Name of the externalCluster (defined below) to recover from.
+      source: cnpg-demo-source
+      # ---- Point-in-time recovery target (OPTIONAL) ----
+      # Omit `recoveryTarget` entirely to recover to the LATEST available WAL.
+      # Uncomment and set a real timestamp to recover to a specific point:
+      # recoveryTarget:
+      #   targetTime: "2026-06-14 12:00:00.000000+00"
+
+  # ---- Where to read the backup from -------------------------------------
+  # Points at the SAME MinIO bucket the source cluster archived to.
+  externalClusters:
+    - name: cnpg-demo-source
+      barmanObjectStore:
+        # serverName must match the source cluster's name so CNPG finds its WALs.
+        serverName: cnpg-demo
+        destinationPath: "s3://cnpg-backups/"
+        endpointURL: "http://minio.cnpg-demo.svc.cluster.local:9000"
+        s3Credentials:
+          accessKeyId:
+            name: minio-creds
+            key: ACCESS_KEY_ID
+          secretAccessKey:
+            name: minio-creds
+            key: ACCESS_SECRET_KEY
+        wal:
+          compression: gzip
+        data:
+          compression: gzip

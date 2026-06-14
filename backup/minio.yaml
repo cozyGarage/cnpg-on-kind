@@ -1,0 +1,126 @@
+# Single-replica MinIO (S3-compatible object store) as the backup target.
+# This is for LOCAL DEMO ONLY — no HA, ephemeral-ish PVC, demo credentials.
+# In production you'd use real S3/GCS/Azure Blob in a separate failure domain.
+#
+# Credentials here are demo-only and intentionally well-known. They are NOT
+# secret. CNPG reads them from the Secret below.
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-creds
+  namespace: cnpg-demo
+type: Opaque
+stringData:
+  # Demo-only credentials. Do NOT reuse this pattern for real buckets.
+  MINIO_ROOT_USER: minioadmin
+  MINIO_ROOT_PASSWORD: minioadmin
+  # CNPG's barmanObjectStore references these same keys (see object-store.yaml).
+  ACCESS_KEY_ID: minioadmin
+  ACCESS_SECRET_KEY: minioadmin
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-data
+  namespace: cnpg-demo
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: cnpg-demo
+  labels:
+    app: minio
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+        - name: minio
+          # Pin a specific MinIO release digest/tag in production.
+          image: quay.io/minio/minio:RELEASE.2024-09-13T20-26-02Z
+          args:
+            - server
+            - /data
+            - --console-address
+            - ":9001"
+          envFrom:
+            - secretRef:
+                name: minio-creds
+          ports:
+            - containerPort: 9000
+              name: s3
+            - containerPort: 9001
+              name: console
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              memory: "512Mi"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: minio-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: cnpg-demo
+spec:
+  selector:
+    app: minio
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: 9000
+    - name: console
+      port: 9001
+      targetPort: 9001
+---
+# Bucket bootstrap: a one-shot Job that creates the "cnpg-backups" bucket
+# using the MinIO client (mc). Idempotent — re-running is harmless.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-make-bucket
+  namespace: cnpg-demo
+spec:
+  backoffLimit: 5
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: quay.io/minio/mc:RELEASE.2024-09-16T17-43-14Z
+          envFrom:
+            - secretRef:
+                name: minio-creds
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              until mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"; do
+                echo "waiting for minio ..."; sleep 3;
+              done
+              mc mb --ignore-existing local/cnpg-backups
+              echo "bucket ready: cnpg-backups"

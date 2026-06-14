@@ -1,0 +1,64 @@
+# CNPG backup configuration -> MinIO (S3-compatible).
+#
+# APPROACH CHOSEN: in-spec `barmanObjectStore` under the Cluster's `spec.backup`.
+# This targets CNPG 1.24.x. It is the long-standing, documented approach.
+#
+# NOTE ON CNPG DIRECTION: starting around CNPG 1.26 the in-tree
+# `barmanObjectStore` is being superseded by the external **barman-cloud plugin**
+# (CNPG-I). If you run a newer operator, prefer the plugin and an
+# `ObjectStore` CR instead of the block below.
+# verify against cloudnative-pg.io docs for your installed operator version:
+#   https://cloudnative-pg.io/documentation/current/backup/
+#
+# This manifest patches the EXISTING Cluster (cnpg-demo) by re-declaring it with
+# the backup block. Apply it AFTER postgres/cluster.yaml and backup/minio.yaml.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: cnpg-demo
+  namespace: cnpg-demo
+spec:
+  instances: 2
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.2
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      memory: "512Mi"
+  storage:
+    size: 1Gi
+    storageClass: standard
+  monitoring:
+    enablePodMonitor: true
+  postgresql:
+    parameters:
+      shared_buffers: "128MB"
+      max_connections: "100"
+      log_min_duration_statement: "250ms"
+      log_checkpoints: "on"
+      log_lock_waits: "on"
+      log_connections: "on"
+      log_disconnections: "on"
+
+  # ---- Backup: continuous WAL archiving + base backups to MinIO ----------
+  backup:
+    # Keep the last 7 base backups (and the WALs needed to PITR between them).
+    retentionPolicy: "7d"
+    barmanObjectStore:
+      # MinIO Service inside the cluster (path-style addressing required).
+      destinationPath: "s3://cnpg-backups/"
+      endpointURL: "http://minio.cnpg-demo.svc.cluster.local:9000"
+      s3Credentials:
+        accessKeyId:
+          name: minio-creds
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: minio-creds
+          key: ACCESS_SECRET_KEY
+      wal:
+        # Compress WAL to cut object-store traffic.
+        compression: gzip
+        maxParallel: 2
+      data:
+        compression: gzip
